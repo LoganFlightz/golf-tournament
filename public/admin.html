@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f4d2a">
+<link rel="manifest" href="/manifest.json">
+<title>Admin</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <h1>Admin</h1>
+  <div>
+    <a href="/">Leaderboard</a>
+    <button id="logoutBtn" style="display:none">Logout</button>
+  </div>
+</div>
+<div class="wrap">
+  <div id="loginView" class="card">
+    <h2>Admin Login</h2>
+    <input type="password" id="pwInput" placeholder="Admin password" style="width:100%">
+    <div style="margin-top:10px"><button class="primary" id="loginBtn" style="width:100%">Sign In</button></div>
+    <div id="loginErr" class="error-msg"></div>
+  </div>
+
+  <div id="adminView" style="display:none">
+    <div class="card">
+      <h2>Active Tournament</h2>
+      <div id="tList"></div>
+      <button class="secondary" id="newTBtn" style="margin-top:10px">+ New Tournament</button>
+    </div>
+
+    <div id="tEditCard" class="card" style="display:none">
+      <h2 id="tEditTitle">Tournament Setup</h2>
+      <div class="row">
+        <div><label>Name</label><input id="tName" style="width:100%"></div>
+        <div><label>Course</label><input id="tCourse" style="width:100%"></div>
+      </div>
+      <label style="margin-top:10px">Par per hole (1–18)</label>
+      <div id="parsRow" class="holes-grid"></div>
+      <label style="margin-top:10px">Handicap rank per hole (1 = hardest, 18 = easiest)</label>
+      <div id="hcpRow" class="holes-grid"></div>
+      <div style="margin-top:12px">
+        <button class="primary" id="saveTBtn">Save Tournament</button>
+        <button class="secondary" id="cancelTBtn">Cancel</button>
+      </div>
+      <div id="tMsg" class="success-msg"></div>
+    </div>
+
+    <div id="teamsCard" class="card" style="display:none">
+      <h2>Teams</h2>
+      <div id="teamsList"></div>
+      <h2 style="margin-top:18px">Add Team</h2>
+      <div class="row">
+        <div><label>Team name</label><input id="newTeamName"></div>
+        <div><label>Players (optional)</label><input id="newTeamPlayers" placeholder="John, Jane, ..."></div>
+        <div><label>Team handicap</label><input type="number" id="newTeamHcp" value="0" min="0" max="36"></div>
+      </div>
+      <div style="margin-top:10px"><button class="primary" id="addTeamBtn">Add Team</button></div>
+    </div>
+
+    <div id="scoreEditCard" class="card" style="display:none">
+      <h2 id="scoreEditTitle">Edit Scores</h2>
+      <div id="scoreEditGrid" class="holes-grid"></div>
+      <div style="margin-top:10px"><button class="secondary" id="closeScoreEdit">Done</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+<script>
+let activeTournament = null;
+let socket = null;
+
+async function checkSession() {
+  const r = await fetch('/api/admin/me');
+  const d = await r.json();
+  if (d.isAdmin) enterAdmin();
+}
+
+document.getElementById('loginBtn').onclick = async () => {
+  const password = document.getElementById('pwInput').value;
+  const r = await fetch('/api/admin/login', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ password })
+  });
+  if (!r.ok) { document.getElementById('loginErr').textContent = 'Wrong password'; return; }
+  enterAdmin();
+};
+document.getElementById('pwInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('loginBtn').click();
+});
+document.getElementById('logoutBtn').onclick = async () => {
+  await fetch('/api/admin/logout', { method: 'POST' });
+  location.reload();
+};
+
+async function enterAdmin() {
+  document.getElementById('loginView').style.display = 'none';
+  document.getElementById('adminView').style.display = '';
+  document.getElementById('logoutBtn').style.display = '';
+  await loadTournaments();
+}
+
+async function loadTournaments() {
+  const list = await fetch('/api/admin/tournaments').then(r => r.json());
+  const active = list.find(t => t.active) || list[0];
+  const c = document.getElementById('tList');
+  if (!list.length) {
+    c.innerHTML = '<div class="empty">No tournaments yet — create one below.</div>';
+    return;
+  }
+  c.innerHTML = list.map(t => `
+    <div style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <strong>${esc(t.name)}</strong> ${t.active ? '<span style="color:var(--green);font-size:11px">● ACTIVE</span>' : ''}
+        <div style="font-size:12px;color:var(--muted)">${esc(t.course_name || '')}</div>
+      </div>
+      <button class="secondary" onclick="editTournament(${t.id})">Edit</button>
+    </div>
+  `).join('');
+  if (active) {
+    activeTournament = active;
+    showTeams();
+    if (!socket) {
+      socket = io();
+      socket.emit('join', active.id);
+    }
+  }
+}
+
+document.getElementById('newTBtn').onclick = () => editTournament(null);
+
+window.editTournament = async function(id) {
+  let t;
+  if (id) {
+    const all = await fetch('/api/admin/tournaments').then(r => r.json());
+    t = all.find(x => x.id === id);
+  } else {
+    t = { name: '', course_name: '', pars: Array(18).fill(4), handicaps: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18], active: true, id: null };
+  }
+  document.getElementById('tEditCard').style.display = '';
+  document.getElementById('tEditCard').dataset.id = id || '';
+  document.getElementById('tEditTitle').textContent = id ? 'Edit Tournament' : 'New Tournament';
+  document.getElementById('tName').value = t.name;
+  document.getElementById('tCourse').value = t.course_name || '';
+  buildHoleInputs('parsRow', t.pars, 3, 6);
+  buildHoleInputs('hcpRow', t.handicaps, 1, 18);
+};
+
+function buildHoleInputs(containerId, values, min, max) {
+  const c = document.getElementById(containerId);
+  c.innerHTML = '';
+  for (let i = 0; i < 18; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'hole-cell';
+    cell.innerHTML = `<label>H${i+1}</label><input type="number" min="${min}" max="${max}" value="${values[i]}">`;
+    c.appendChild(cell);
+  }
+}
+
+document.getElementById('cancelTBtn').onclick = () => {
+  document.getElementById('tEditCard').style.display = 'none';
+};
+
+document.getElementById('saveTBtn').onclick = async () => {
+  const id = document.getElementById('tEditCard').dataset.id;
+  const name = document.getElementById('tName').value.trim();
+  const course_name = document.getElementById('tCourse').value.trim();
+  const pars = [...document.querySelectorAll('#parsRow input')].map(i => parseInt(i.value));
+  const handicaps = [...document.querySelectorAll('#hcpRow input')].map(i => parseInt(i.value));
+  if (!name) { document.getElementById('tMsg').textContent = 'Name required'; return; }
+  // Validate handicaps are 1..18 unique
+  const sorted = [...handicaps].sort((a,b)=>a-b).join(',');
+  if (sorted !== '1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18') {
+    document.getElementById('tMsg').textContent = 'Handicap ranks must be 1–18, each used once';
+    document.getElementById('tMsg').className = 'error-msg';
+    return;
+  }
+  const url = id ? `/api/admin/tournament/${id}` : '/api/admin/tournament';
+  const method = id ? 'PUT' : 'POST';
+  const body = id
+    ? { name, course_name, pars, handicaps, active: true }
+    : { name, course_name, pars, handicaps };
+  const r = await fetch(url, { method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (r.ok) {
+    document.getElementById('tMsg').textContent = 'Saved';
+    document.getElementById('tMsg').className = 'success-msg';
+    document.getElementById('tEditCard').style.display = 'none';
+    await loadTournaments();
+  }
+};
+
+async function showTeams() {
+  if (!activeTournament) return;
+  document.getElementById('teamsCard').style.display = '';
+  const teams = await fetch(`/api/admin/teams/${activeTournament.id}`).then(r => r.json());
+  const c = document.getElementById('teamsList');
+  if (!teams.length) {
+    c.innerHTML = '<div class="empty">No teams yet</div>';
+    return;
+  }
+  c.innerHTML = teams.map(t => `
+    <div style="padding:12px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <strong>${esc(t.name)}</strong>
+          <div style="font-size:12px;color:var(--muted)">${esc(t.players || '')} · Hcp ${t.handicap}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span class="code-display">${t.captain_code}</span>
+          <button class="secondary" onclick="editScores(${t.id}, '${esc(t.name).replace(/'/g,"\\'")}')">Scores</button>
+          <button class="danger" onclick="delTeam(${t.id})">Delete</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('addTeamBtn').onclick = async () => {
+  if (!activeTournament) { alert('Set up a tournament first'); return; }
+  const name = document.getElementById('newTeamName').value.trim();
+  if (!name) return;
+  await fetch('/api/admin/team', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      tournament_id: activeTournament.id,
+      name,
+      players: document.getElementById('newTeamPlayers').value.trim(),
+      handicap: parseInt(document.getElementById('newTeamHcp').value) || 0
+    })
+  });
+  document.getElementById('newTeamName').value = '';
+  document.getElementById('newTeamPlayers').value = '';
+  document.getElementById('newTeamHcp').value = '0';
+  showTeams();
+};
+
+window.delTeam = async function(id) {
+  if (!confirm('Delete this team and all their scores?')) return;
+  await fetch(`/api/admin/team/${id}`, { method: 'DELETE' });
+  showTeams();
+};
+
+window.editScores = async function(teamId, teamName) {
+  const lb = await fetch(`/api/leaderboard/${activeTournament.id}`).then(r => r.json());
+  const team = lb.teams.find(t => t.teamId === teamId);
+  document.getElementById('scoreEditCard').style.display = '';
+  document.getElementById('scoreEditTitle').textContent = `Scores: ${teamName}`;
+  const grid = document.getElementById('scoreEditGrid');
+  grid.innerHTML = '';
+  for (let i = 0; i < 18; i++) {
+    const h = team.holes[i];
+    const cell = document.createElement('div');
+    cell.className = 'hole-cell';
+    cell.innerHTML = `<label>H${i+1}</label><div class="par-label">Par ${h.par}</div>
+      <input type="number" min="1" max="20" data-hole="${i+1}" value="${h.gross ?? ''}">`;
+    grid.appendChild(cell);
+  }
+  grid.querySelectorAll('input').forEach(inp => {
+    inp.onchange = async () => {
+      await fetch('/api/admin/score', {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ team_id: teamId, hole: parseInt(inp.dataset.hole), gross: inp.value === '' ? null : parseInt(inp.value) })
+      });
+    };
+  });
+  window.scrollTo({ top: document.getElementById('scoreEditCard').offsetTop, behavior: 'smooth' });
+};
+
+document.getElementById('closeScoreEdit').onclick = () => {
+  document.getElementById('scoreEditCard').style.display = 'none';
+};
+
+checkSession();
+</script>
+</body>
+</html>

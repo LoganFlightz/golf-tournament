@@ -1,0 +1,22 @@
+{
+  "name": "golf-tournament-leaderboard",
+  "version": "1.0.0",
+  "description": "Real-time golf tournament leaderboard PWA for school scrambles",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "pg": "^8.12.0",
+    "bcryptjs": "^2.4.3",
+    "express-session": "^1.18.0",
+    "connect-pg-simple": "^9.0.1",
+    "dotenv": "^16.4.5"
+  }
+}

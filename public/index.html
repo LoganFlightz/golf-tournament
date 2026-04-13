@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f4d2a">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<title>Tournament Leaderboard</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <h1 id="tname">Loading...</h1>
+  <div>
+    <a href="/captain">Captain</a>
+    <a href="/admin">Admin</a>
+  </div>
+</div>
+<div class="wrap">
+  <div id="installBanner" class="install-banner" style="display:none">
+    <span>📱 Install this app for quick access</span>
+    <button id="installBtn">Install</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" data-tab="leaderboard">Leaderboard</button>
+    <button class="tab" data-tab="feed">Live Feed</button>
+  </div>
+
+  <div id="leaderboardView">
+    <div class="card">
+      <div id="lbContent"><div class="empty">Loading...</div></div>
+    </div>
+  </div>
+
+  <div id="feedView" style="display:none">
+    <div class="card">
+      <h2>Live Updates</h2>
+      <div id="feedContent"><div class="empty">No updates yet</div></div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+<script>
+let tournamentId = null;
+let socket = null;
+
+async function init() {
+  const t = await fetch('/api/tournament/active').then(r => r.json());
+  if (!t) {
+    document.getElementById('tname').textContent = 'No active tournament';
+    document.getElementById('lbContent').innerHTML = '<div class="empty">An admin needs to create a tournament. Visit /admin.</div>';
+    return;
+  }
+  tournamentId = t.id;
+  document.getElementById('tname').textContent = t.name;
+  document.title = t.name;
+
+  socket = io();
+  socket.on('connect', () => socket.emit('join', tournamentId));
+  socket.on('leaderboard', renderLeaderboard);
+  socket.on('events', renderFeed);
+}
+
+function renderLeaderboard(lb) {
+  if (!lb || !lb.teams.length) {
+    document.getElementById('lbContent').innerHTML = '<div class="empty">No teams yet.</div>';
+    return;
+  }
+  let rows = '';
+  for (const t of lb.teams) {
+    const posClass = t.position === 1 && t.toParNet != null ? 'gold' : '';
+    const tpClass = t.toParNet != null && t.toParNet < 0 ? 'under' : '';
+    rows += `<tr>
+      <td class="pos ${posClass}">${t.position}</td>
+      <td class="name">${esc(t.name)}${t.players ? `<div class="sub">${esc(t.players)}</div>` : ''}</td>
+      <td class="topar ${tpClass}">${fmtPar(t.toParNet)}</td>
+      <td>${t.toParGross == null ? '—' : fmtPar(t.toParGross)}</td>
+      <td>${t.holesPlayed === 0 ? '—' : t.holesPlayed === 18 ? 'F' : `<span class="thru">${t.holesPlayed}</span>`}</td>
+    </tr>`;
+  }
+  document.getElementById('lbContent').innerHTML = `
+    <table class="lb-table">
+      <thead><tr><th>#</th><th>Team</th><th>Net</th><th>Gross</th><th>Thru</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+function renderFeed(events) {
+  if (!events || !events.length) {
+    document.getElementById('feedContent').innerHTML = '<div class="empty">No updates yet</div>';
+    return;
+  }
+  let html = '';
+  for (const e of events) {
+    const cls = e.type === 'highlight' ? 'highlight' : e.type === 'mover' ? 'mover' : '';
+    const photo = e.has_photo ? `<img class="feed-photo" src="/api/photo/${e.id}" alt="">` : '';
+    html += `<div class="feed-item ${cls}">
+      <div>${esc(e.message || '')}</div>
+      ${photo}
+      <div class="feed-time">${timeAgo(e.created_at)}</div>
+    </div>`;
+  }
+  document.getElementById('feedContent').innerHTML = html;
+}
+
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  const tab = t.dataset.tab;
+  document.getElementById('leaderboardView').style.display = tab === 'leaderboard' ? '' : 'none';
+  document.getElementById('feedView').style.display = tab === 'feed' ? '' : 'none';
+});
+
+init();
+</script>
+</body>
+</html>
